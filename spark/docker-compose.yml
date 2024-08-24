@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  spark-master:
+    image: bitnami/spark:3.5.0
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "7077:7077"
+      - "3241:8080"  # This port is mapped but not required for Spark Master by default
+    user: "root"  # Run as root user
+  
+  spark-worker:
+    image: bitnami/spark:3.5.0
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+    depends_on:
+      - spark-master
+    ports:
+      - "3240:3240"  # This port is mapped but not required for Spark Worker by default
+    user: "root"  # Run as root user
+
+  jupyter:
+    image: my-pyspark-notebook:3.5.0
+    container_name: jupyter
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - SPARK_MASTER=spark://spark-master:7077
+      - NB_UID=1000  # Use the UID of jovyan or an appropriate user
+      - NB_GID=100   # Use the GID of jovyan or an appropriate group
+    volumes:
+      - ./work:/home/jovyan/work  # Mounts your local directory to Jupyter
+    ports:
+      - "3442:8888"
+    depends_on:
+      - spark-master
+      - spark-worker
+    user: "root"  # Run as root user
+
+  namenode:
+    image: sequenceiq/hadoop-docker:2.7.1
+    container_name: namenode
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+    ports:
+      - "50070:50070"  # Web UI for Namenode
+    volumes:
+      - ./work/data/namenode:/hadoop/dfs/name  # Store NameNode data in Jupyter's "data" folder
+    depends_on:
+      - jupyter
+    user: "root"
+    command: >
+      /bin/bash -c "
+        /etc/bootstrap.sh -namenode &&
+        /usr/local/hadoop/bin/hdfs dfs -mkdir -p /user/jovyan &&
+        /usr/local/hadoop/bin/hdfs dfs -chown -R jovyan:supergroup /user/jovyan &&
+        /usr/local/hadoop/sbin/start-dfs.sh &&
+        /usr/local/hadoop/sbin/start-yarn.sh &&
+        tail -f /usr/local/hadoop/logs/*namenode*.out"
+
+
+  datanode:
+    image: sequenceiq/hadoop-docker:2.7.1
+    container_name: datanode
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+    ports:
+      - "50075:50075"  # Web UI for Datanode
+    volumes:
+      - ./work/data/datanode:/hadoop/dfs/data  # Store DataNode data in Jupyter's "data" folder
+    depends_on:
+      - namenode
+      - jupyter
+    user: "root"
+
+volumes:
+  hdfs-namenode:
+  hdfs-datanode:
