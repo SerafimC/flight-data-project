@@ -53,6 +53,7 @@ services:
       - CLUSTER_NAME=hadoop-cluster
     ports:
       - "50070:50070"  # Web UI for Namenode
+      - "9000:9000"    # RPC port for Namenode
     volumes:
       - ./work/data/namenode:/hadoop/dfs/name  # Store NameNode data in Jupyter's "data" folder
     depends_on:

@@ -10,6 +10,14 @@ ENV SPARK_HOME=/opt/spark
 # Switch to root user to install dependencies
 USER root
 
+RUN pip install --no-cache-dir \
+    FlightRadarAPI \
+
+RUN conda activate base && pip install hdfs
+
+# Ensure necessary permissions
+RUN chown -R $NB_UID:$NB_GID /opt/hadoop
+
 # Remove the pre-installed Spark version
 RUN rm -rf /opt/spark
 
@@ -17,9 +25,6 @@ RUN rm -rf /opt/spark
 RUN curl -sL https://archive.apache.org/dist/spark/spark-${APACHE_SPARK_VERSION}/spark-${APACHE_SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz | tar -xz -C /opt/ && \
     mv /opt/spark-${APACHE_SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} $SPARK_HOME && \
     chown -R $NB_UID:$NB_GID $SPARK_HOME
-
-# Install HDFS3 Python client
-RUN pip install hdfs3
 
 # Configure environment variables for Spark
 ENV PATH="$SPARK_HOME/bin:$SPARK_HOME/sbin:$PATH"
