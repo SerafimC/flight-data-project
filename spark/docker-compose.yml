@@ -44,6 +44,7 @@ services:
     depends_on:
       - spark-master
       - spark-worker
+      - mysql
     user: "root"  # Run as root user
 
   namenode:
@@ -55,19 +56,20 @@ services:
       - "50070:50070"  # Web UI for Namenode
       - "9000:9000"    # RPC port for Namenode
     volumes:
-      - ./work/data/namenode:/hadoop/dfs/name  # Store NameNode data in Jupyter's "data" folder
+      - hdfs-namenode:/hadoop/dfs/name  # Store NameNode data in Jupyter's "data" folder
     depends_on:
       - jupyter
     user: "root"
+    ## Run only the first time raising the namenode
     command: >
       /bin/bash -c "
+        /usr/local/hadoop/bin/hdfs namenode -format -force &&
         /etc/bootstrap.sh -namenode &&
         /usr/local/hadoop/bin/hdfs dfs -mkdir -p /user/jovyan &&
         /usr/local/hadoop/bin/hdfs dfs -chown -R jovyan:supergroup /user/jovyan &&
         /usr/local/hadoop/sbin/start-dfs.sh &&
         /usr/local/hadoop/sbin/start-yarn.sh &&
         tail -f /usr/local/hadoop/logs/*namenode*.out"
-
 
   datanode:
     image: sequenceiq/hadoop-docker:2.7.1
@@ -77,12 +79,39 @@ services:
     ports:
       - "50075:50075"  # Web UI for Datanode
     volumes:
-      - ./work/data/datanode:/hadoop/dfs/data  # Store DataNode data in Jupyter's "data" folder
+      - hdfs-datanode:/hadoop/dfs/data
     depends_on:
       - namenode
       - jupyter
     user: "root"
 
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root  
+      # MYSQL_DATABASE: mydatabase  # Default database
+      MYSQL_USER: user
+      MYSQL_PASSWORD: pass
+    ports:
+      - "3306:3306"  # MySQL default port
+    volumes:
+      - mysql-data:/var/lib/mysql  # Persist MySQL data
+    networks:
+      - default  # Ensure it's accessible to the other containers
+
 volumes:
   hdfs-namenode:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ./hdfs-namenode  # Local directory for persistent storage
   hdfs-datanode:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ./hdfs-datanode  # Local directory for persistent storage
+  mysql-data:  # Volume for MySQL data persistence
+    driver: local
