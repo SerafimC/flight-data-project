@@ -1,0 +1,215 @@
+version: '3.8'
+x-project:
+  name: flight_data_project
+
+services:
+  spark-master:
+    image: bitnami/spark:3.5.0
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "7077:7077"
+      - "3241:8080"  # This port is mapped but not required for Spark Master by default
+    user: "root"  # Run as root user
+  
+  spark-worker:
+    image: bitnami/spark:3.5.0
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=1
+    depends_on:
+      - spark-master
+    ports:
+      - "3240:3240"  # This port is mapped but not required for Spark Worker by default
+    user: "root"  # Run as root user
+
+  jupyter:
+    image: my-pyspark-notebook:3.5.0
+    container_name: jupyter
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - SPARK_MASTER=spark://spark-master:7077
+      - NB_UID=1000  # Use the UID of jovyan or an appropriate user
+      - NB_GID=100   # Use the GID of jovyan or an appropriate group
+    volumes:
+      - ./work:/home/jovyan/work  # Mounts your local directory to Jupyter
+    ports:
+      - "3442:8888"
+    depends_on:
+      - spark-master
+      - spark-worker
+      - mysql
+    user: "root"  # Run as root user
+
+  namenode:
+    image: sequenceiq/hadoop-docker:2.7.1
+    container_name: namenode
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+      - HADOOP_NAMENODE_ADDRESS=namenode:9000
+    ports:
+      - "50070:50070"  # Web UI for Namenode
+      - "9000:9000"    # RPC port for Namenode
+    volumes:
+      - hdfs-namenode:/hadoop/dfs/name  # Store NameNode data
+    depends_on:
+      - jupyter
+    user: "root"
+    command: >
+      /bin/bash -c "
+        /etc/bootstrap.sh -namenode &&
+        /usr/local/hadoop/bin/hdfs dfs -mkdir -p /user/jovyan &&
+        /usr/local/hadoop/bin/hdfs dfs -chown -R jovyan:supergroup hdfs://namenode:9000/user/jovyan &&
+        /usr/local/hadoop/sbin/start-dfs.sh &&
+        while true; do sleep 1000; done"
+
+  datanode:
+    image: sequenceiq/hadoop-docker:2.7.1
+    container_name: datanode
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+      - HADOOP_NAMENODE_ADDRESS=namenode:9000 
+    ports:
+      - "50075:50075"  # Web UI for Datanode
+    volumes:
+      - hdfs-datanode:/hadoop/dfs/data
+    depends_on:
+      - namenode
+      - jupyter
+    user: "root"
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root  
+      MYSQL_USER: user
+      MYSQL_PASSWORD: pass
+    ports:
+      - "3306:3306"  # MySQL default port
+    volumes:
+      - mysql-data:/var/lib/mysql  # Persist MySQL data
+
+  airflow-webserver:
+    image: apache/airflow:2.7.2
+    container_name: airflow-webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor  # Change to LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__WEBSERVER__BASE_URL=http://airflow-webserver:8080
+      - AIRFLOW__WEBSERVER__WORKERS=2
+      - AIRFLOW__WEBSERVER__WEB_SERVER_TIMEOUT=3000
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
+      - SPARK_MASTER=spark://spark-master:7077 
+    ports:
+      - "3443:8080"  # Airflow Webserver port
+    depends_on:
+      - postgres
+      - redis
+      - airflow-init
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags  # DAGs directory
+    command: ["webserver"]
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    # Add the Spark provider installation
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+
+  airflow-scheduler:
+    image: apache/airflow:2.7.2
+    container_name: airflow-scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor  # Change to LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8080
+      - SPARK_MASTER=spark://spark-master:7077 
+    depends_on:
+      - postgres
+      - redis
+      - airflow-webserver
+      - airflow-init
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+    command: ["scheduler"]
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+
+  # airflow-worker:
+  #   image: apache/airflow:2.7.2
+  #   container_name: airflow-worker
+  #   environment:
+  #     - AIRFLOW__CORE__EXECUTOR=LocalExecutor  # Change to LocalExecutor
+  #     - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+  #   depends_on:
+  #     - postgres
+  #     - redis
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
+  #   volumes:
+  #     - ./airflow/dags:/opt/airflow/dags
+  #   command: ["celery", "worker"] 
+
+  airflow-init:
+    image: apache/airflow:2.7.2
+    container_name: airflow-init
+    environment:
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=VFLgn5UMv8wYVWkYn1D0P81wlSJmMbSuRHiClBa6vOo=
+    depends_on:
+      - postgres
+    command: ["db", "init"]
+
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:6
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  hdfs-namenode:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: /Users/serafimc/Documents/flight-data-project/gitfolder/app/hdfs-namenode  # Local directory for persistent storage
+  hdfs-datanode:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: /Users/serafimc/Documents/flight-data-project/gitfolder/app/hdfs-datanode  # Local directory for persistent storage
+  mysql-data:  # Volume for MySQL data persistence
+    driver: local
+  postgres-data:  # Volume for PostgreSQL data persistence
+    driver: local

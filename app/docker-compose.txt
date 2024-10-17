@@ -52,6 +52,7 @@ services:
     container_name: namenode
     environment:
       - CLUSTER_NAME=hadoop-cluster
+      - HADOOP_NAMENODE_ADDRESS=namenode:9000
     ports:
       - "50070:50070"  # Web UI for Namenode
       - "9000:9000"    # RPC port for Namenode
@@ -76,6 +77,7 @@ services:
     container_name: datanode
     environment:
       - CLUSTER_NAME=hadoop-cluster
+      - HADOOP_NAMENODE_ADDRESS=namenode:9000 
     ports:
       - "50075:50075"  # Web UI for Datanode
     volumes:
@@ -84,6 +86,15 @@ services:
       - namenode
       - jupyter
     user: "root"
+    command: >
+      /bin/bash -c "
+      echo 'fs.defaultFS=hdfs://$HADOOP_NAMENODE_ADDRESS' >> /usr/local/hadoop/etc/hadoop/core-site.xml &&
+      while ! (echo > /dev/tcp/namenode/9000); do
+        echo 'Waiting for NameNode...';
+        sleep 5;
+      done &&
+      /usr/local/hadoop/sbin/hadoop-daemon.sh start datanode &&
+      tail -f /usr/local/hadoop/logs/*datanode*.out"
 
   mysql:
     image: mysql:8.0

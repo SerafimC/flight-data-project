@@ -1,0 +1,7 @@
+FROM apache/airflow:2.7.2
+USER airflow
+RUN pip uninstall -y apache-airflow-providers-openlineage \
+    && pip install apache-airflow-providers-openlineage>=1.8.0
+RUN pip install apache-airflow-providers-apache-spark
+RUN airflow db migrate -n "2.10.2"
+USER airflow
