@@ -1,7 +1,89 @@
-FROM apache/airflow:2.7.2
+# Use the latest recommended Airflow version for Spark compatibility
+FROM apache/airflow:latest
+
+# Set Airflow user for installation
 USER airflow
-RUN pip uninstall -y apache-airflow-providers-openlineage \
-    && pip install apache-airflow-providers-openlineage>=1.8.0
-RUN pip install apache-airflow-providers-apache-spark
-RUN airflow db migrate -n "2.10.2"
+
+# Uninstall and reinstall specific providers as per requirements
+RUN pip uninstall -y apache-airflow-providers-openlineage
+RUN pip install --upgrade pip
+RUN pip install apache-airflow-providers-openlineage>=1.8.0 \
+                apache-airflow-providers-apache-spark>=2.1.1 \
+                "apache-airflow" \
+                FlightRadarAPI
+
+# Install Java as root for Spark compatibility
+USER root
+RUN apt-get update && apt-get install -y default-jdk procps && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set Java environment variables
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Download and set up Spark 3.5.0 from a stable mirror
+ARG SPARK_VERSION=3.5.0
+RUN curl -fSL "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop3.tgz" | tar -xz -C /opt/ && \
+    rm -rf /opt/spark && \
+    mv /opt/spark-${SPARK_VERSION}-bin-hadoop3 /opt/spark && \
+    chown -R airflow: /opt/spark
+
+# Atualizar e instalar dependências
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    wget \
+    curl \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    libbz2-dev \
+    zlib1g-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncurses5-dev \
+    libgdbm-dev \
+    libnss3-dev \
+    liblzma-dev \
+    tk-dev \
+    uuid-dev \
+    xz-utils \
+    && apt-get clean
+
+# Baixar e compilar o Python 3.12 do código-fonte
+RUN wget https://www.python.org/ftp/python/3.12.0/Python-3.12.0.tgz && \
+    tar -xvf Python-3.12.0.tgz && \
+    cd Python-3.12.0 && \
+    ./configure --enable-optimizations && \
+    make -j$(nproc) && \
+    make altinstall && \
+    cd .. && \
+    rm -rf Python-3.12.0 Python-3.12.0.tgz
+
+# Verificar a versão do Python instalado
+RUN python3.12 --version
+
+# Definir o Python 3.12 como padrão
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.12 1
+ENV PYSPARK_PYTHON=/home/airflow/.local/bin/python3.12
+ENV PYSPARK_DRIVER_PYTHON=/home/airflow/.local/bin/python3.12
+
+# Set Spark environment variables
+ENV SPARK_HOME=/opt/spark
+ENV PATH="${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${PATH}"
+
+# Allow the Airflow user to use sudo
+RUN echo "airflow ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Revert to the Airflow user for running commands
 USER airflow
+
+RUN airflow db migrate
+
+# Create default admin user for Airflow
+RUN airflow users create \
+    --username admin \
+    --firstname Admin \
+    --lastname User \
+    --role Admin \
+    --email admin@example.com \
+    --password admin

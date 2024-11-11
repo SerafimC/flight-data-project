@@ -1,3 +1,13 @@
-spark/work/data/
-spark/work/spark-temp/
-spark/work/BaseUtils/Config.py
+app/work/data/
+app/work/spark-temp/
+app/work/RawObjects/tmp/
+app/work/BaseUtils/Config.py
+app/work/BaseUtils/__pycache__/
+app/work/RawObjects/data/
+app/work/RawObjects/.ipynb_checkpoints
+app/airflow/dags/__pycache__/
+app/airflow/RawObjects/data/
+
+/app/work/data/.ipynb_checkpoints
+/app/work/BaseUtils/__pycache__
+/app/airflow/dags/__pycache__
